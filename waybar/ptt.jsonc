@@ -1,0 +1,8 @@
+// Push-to-talk dictation state, written by ~/.local/bin/ptt (whisper-ptt).
+// No polling: ptt sends SIGRTMIN+8 on each change. Hidden when idle.
+"custom/ptt": {
+    "exec": "cat \"$XDG_RUNTIME_DIR/ptt/state.json\" 2>/dev/null",
+    "return-type": "json",
+    "interval": "once",
+    "signal": 8
+},

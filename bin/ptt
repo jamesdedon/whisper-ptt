@@ -17,7 +17,21 @@ DIR="${XDG_RUNTIME_DIR:-/tmp}/ptt"
 PIDFILE="$DIR/rec.pid"
 WAV="$DIR/rec.wav"
 LOG="$DIR/ptt.log"
+STATE="$DIR/state.json"   # read by the waybar custom/ptt module
 mkdir -p "$DIR"
+
+# Waybar indicator: write state as waybar JSON, then poke the module
+# (signal 8 = SIGRTMIN+8). Empty text hides the module.
+set_state() {
+    case $1 in
+        recording)    j='{"text":"\uf130","class":"recording","tooltip":"Dictation: recording"}' ;;
+        transcribing) j='{"text":"\uf130","class":"transcribing","tooltip":"Dictation: transcribing"}' ;;
+        done)         j='{"text":"\uf130","class":"done","tooltip":"Dictation: typed"}' ;;
+        *)            j='{"text":"","class":"idle"}' ;;
+    esac
+    printf '%s\n' "$j" > "$STATE"
+    pkill -RTMIN+8 -x waybar 2>/dev/null
+}
 
 start() {
     [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && exit 0
@@ -28,6 +42,7 @@ start() {
     timeout -s INT "$MAX_SECONDS" \
         parecord --latency-msec=20 --rate=16000 --channels=1 --format=s16le --file-format=wav "$WAV" &
     echo $! > "$PIDFILE"
+    set_state recording
 }
 
 stop() {
@@ -37,18 +52,25 @@ stop() {
     while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done
 
     # Ignore accidental taps (< ~0.3 s of audio: 44-byte header + 16 kB/s)
-    [[ -s $WAV ]] && (( $(stat -c %s "$WAV") > 10000 )) || exit 0
+    if ! [[ -s $WAV ]] || (( $(stat -c %s "$WAV") <= 10000 )); then
+        set_state idle; exit 0
+    fi
+    set_state transcribing
 
     text=$(curl -sS -m 60 "$WHISPER_URL" \
         -F file=@"$WAV" -F model="$MODEL" -F response_format=text 2>>"$LOG")
     rc=$?
     if (( rc != 0 )); then
-        echo "$(date -Is) curl failed rc=$rc" >> "$LOG"; exit 1
+        echo "$(date -Is) curl failed rc=$rc" >> "$LOG"; set_state idle; exit 1
     fi
     # Trim surrounding whitespace
     text="${text#"${text%%[![:space:]]*}"}"
     text="${text%"${text##*[![:space:]]}"}"
     [[ -n $text ]] && wtype -- "$text"
+    # Brief green "done" flash, then hide -- unless a new recording started.
+    set_state done
+    sleep 0.4
+    grep -q '"done"' "$STATE" && set_state idle
 }
 
 case "$1" in

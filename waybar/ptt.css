@@ -1,0 +1,7 @@
+/* Uses @green / @peach from the Catppuccin Mocha palette in style.css;
+   swap in plain colors (e.g. #a6e3a1 / #fab387) if your theme lacks them. */
+/* Push-to-talk: green while recording, orange while transcribing,
+   green flash when typed, hidden when idle */
+#custom-ptt.recording,
+#custom-ptt.done         { background: @green; }
+#custom-ptt.transcribing { background: @peach; }

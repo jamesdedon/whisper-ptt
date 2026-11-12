@@ -26,8 +26,13 @@ F5 up   ──► ptt stop  ──► SIGINT recorder
   `ptt stop` still does nothing if no recording is in progress.
 - **Safety cap:** recording stops after 120 s if a release event is ever missed.
 - **Short taps:** clips under about 0.3 s are discarded without being sent.
+- **Waybar indicator:** a mic pill just left of the clock. It's green while
+  recording, orange while transcribing, flashes green for 0.4 s once the text
+  is typed, then hides. `ptt` writes the state as Waybar JSON and sends
+  `SIGRTMIN+8`, so Waybar redraws only on changes. Nothing polls, and it costs
+  nothing when idle. A short tap or a failed request hides it right away.
 - **Runtime files:** `$XDG_RUNTIME_DIR/ptt/` holds `rec.pid`, `rec.wav` (the
-  last clip) and `ptt.log` (errors).
+  last clip), `state.json` (indicator state) and `ptt.log` (errors).
 
 ## Files
 
@@ -36,6 +41,8 @@ F5 up   ──► ptt stop  ──► SIGINT recorder
 | `bin/ptt` | `~/.local/bin/ptt` |
 | `config.example` | `~/.config/ptt/config` (local settings, e.g. server URL) |
 | `sway/ptt.conf` | pasted into `~/.config/sway/config` after the `$mod+n` draft binding |
+| `waybar/ptt.jsonc` | module definition in `~/.config/waybar/config.jsonc`; `"custom/ptt"` goes first in `modules-center`, before `"clock"` |
+| `waybar/ptt.css` | appended to `~/.config/waybar/style.css`; `#custom-ptt` also joins the shared pill selector |
 | `docs/internal-mic.md` | notes on the Terra internal-mic fix (DMIC2) |
 
 ## Install
@@ -70,8 +77,9 @@ OpenAI-compatible Whisper server.
    Debian UCM profile routes the Terra's internal mic to DMIC1, but the mic is
    wired to DMIC2. `ptt start` sets `Stereo1 DMIC Mux` to DMIC2 before every
    recording. See [docs/internal-mic.md](docs/internal-mic.md).
-3. **Nothing on screen shows recording is active.** That's by design for now.
-   A waybar indicator is a possible follow-up.
+3. **Nothing on screen showed recording was active.** Fixed with the Waybar
+   indicator. It uses a signal rather than polling, so it costs nothing when
+   idle.
 
 ## Status
 
@@ -82,6 +90,5 @@ terminal.
 
 - Make the DMIC2 fix system-wide with a UCM override, so other apps such as
   video calls get the internal mic too.
-- Add a waybar indicator that shows while recording or transcribing.
 - Add a toggle mode (press once to start, press again to stop) as an
   alternative to holding the keys.
