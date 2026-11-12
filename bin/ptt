@@ -5,6 +5,10 @@
 #   ptt stop    - stop, transcribe, type (no-op if not recording)
 # Bound in sway: hold F5 (Chromebook show-all-windows key).
 
+# Local settings (not in the repo): PTT_WHISPER_URL, PTT_MODEL
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/ptt/config"
+[[ -f $CONFIG ]] && . "$CONFIG"
+
 WHISPER_URL="${PTT_WHISPER_URL:-http://whisper-host:8100/v1/audio/transcriptions}"
 MODEL="${PTT_MODEL:-large-v3-turbo}"
 MAX_SECONDS=120   # safety cap if the release event is ever missed

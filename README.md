@@ -16,7 +16,7 @@ F5 up   ──► ptt stop  ──► SIGINT recorder
                               ──► wtype "<text>" into focused window
 ```
 
-- **Server:** `whisper-server` 0.1.0 at `http://whisper-host:8100`. It has an
+- **Server:** `whisper-server` 0.1.0 on a LAN desktop, port 8100. It has an
   OpenAI-compatible API and runs model `large-v3-turbo` on CUDA (int8_float16).
   A short clip takes about 1 s round trip.
 - **Hotkey:** the show-all-windows (overview) key, which sends plain `F5`
@@ -34,6 +34,7 @@ F5 up   ──► ptt stop  ──► SIGINT recorder
 | Repo path | Deployed to |
 |---|---|
 | `bin/ptt` | `~/.local/bin/ptt` |
+| `config.example` | `~/.config/ptt/config` (local settings, e.g. server URL) |
 | `sway/ptt.conf` | pasted into `~/.config/sway/config` after the `$mod+n` draft binding |
 | `docs/internal-mic.md` | notes on the Terra internal-mic fix (DMIC2) |
 
@@ -42,20 +43,22 @@ F5 up   ──► ptt stop  ──► SIGINT recorder
 ```sh
 sudo apt install wtype alsa-utils        # pulseaudio-utils, curl already present
 install -m755 bin/ptt ~/.local/bin/ptt
+install -Dm644 config.example ~/.config/ptt/config   # then set your server URL
 # add sway/ptt.conf contents to ~/.config/sway/config, then:
 swaymsg reload
 ```
 
-Configuration is read from environment variables, with defaults set in the script:
+Settings come from `~/.config/ptt/config`, which `ptt` sources on every run
+and which is kept out of the repo. Environment variables work too. Defaults:
 
 | Variable | Default |
 |---|---|
 | `PTT_WHISPER_URL` | `http://whisper-host:8100/v1/audio/transcriptions` |
 | `PTT_MODEL` | `large-v3-turbo` |
 
-Sway's `exec` doesn't pick up shell rc files, so to change these, either edit
-the defaults in the script or put the variables in the binding, e.g.
-`exec env PTT_MODEL=... ptt start`.
+The config file is the easy way, because Sway's `exec` doesn't pick up shell
+rc files. `whisper-host` is a placeholder: point `PTT_WHISPER_URL` at your own
+OpenAI-compatible Whisper server.
 
 ## Gotchas found while building it
 

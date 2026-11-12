@@ -1,0 +1,4 @@
+# Copy to ~/.config/ptt/config and set your server's address.
+# Sourced by bin/ptt (bash syntax).
+PTT_WHISPER_URL="http://whisper-host:8100/v1/audio/transcriptions"
+#PTT_MODEL="large-v3-turbo"
