@@ -1,8 +1,8 @@
 # whisper-ptt
 
-Push-to-talk dictation for Sway. Hold **Search+T** and speak. When you release
-the keys, the audio is transcribed by a Whisper server on the LAN and the text
-is typed into the focused window.
+Push-to-talk dictation for Sway. Hold the **show-all-windows key** (top row,
+sends F5) and speak. When you release it, the audio is transcribed by a
+Whisper server on the LAN and the text is typed into the focused window.
 
 The current setup is the Chromebook **chromenstein** (Google Terra / ASUS
 C202SA, Debian 13, Sway) using the GPU Whisper server on the homelab desktop.
@@ -10,8 +10,8 @@ C202SA, Debian 13, Sway) using the GPU Whisper server on the homelab desktop.
 ## How it works
 
 ```
-Search+T down ──► ptt start ──► parecord (16 kHz mono WAV)
-Search+T up   ──► ptt stop  ──► SIGINT recorder
+F5 down ──► ptt start ──► parecord (16 kHz mono WAV)
+F5 up   ──► ptt stop  ──► SIGINT recorder
                               ──► POST /v1/audio/transcriptions (desktop)
                               ──► wtype "<text>" into focused window
 ```
@@ -19,9 +19,11 @@ Search+T up   ──► ptt stop  ──► SIGINT recorder
 - **Server:** `whisper-server` 0.1.0 at `http://whisper-host:8100`. It has an
   OpenAI-compatible API and runs model `large-v3-turbo` on CUDA (int8_float16).
   A short clip takes about 1 s round trip.
-- **Release handling:** the stop binding runs when either T or Search is
-  released first. `ptt stop` does nothing if no recording is in progress, so
-  extra releases are harmless.
+- **Hotkey:** the show-all-windows (overview) key, which sends plain `F5`
+  because keyd only remaps F6–F10. It was originally Search+T, which needed
+  stop bindings on the release of both T and Super_L, since a `$mod+t` release
+  binding doesn't fire if Search is let go first. A single key avoids that.
+  `ptt stop` still does nothing if no recording is in progress.
 - **Safety cap:** recording stops after 120 s if a release event is ever missed.
 - **Short taps:** clips under about 0.3 s are discarded without being sent.
 - **Runtime files:** `$XDG_RUNTIME_DIR/ptt/` holds `rec.pid`, `rec.wav` (the

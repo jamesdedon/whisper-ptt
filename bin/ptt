@@ -3,7 +3,7 @@
 # desktop's whisper-server (OpenAI-compatible), type result into focused window.
 #   ptt start   - begin recording (no-op if already recording)
 #   ptt stop    - stop, transcribe, type (no-op if not recording)
-# Bound in sway: hold $mod+t.
+# Bound in sway: hold F5 (Chromebook show-all-windows key).
 
 WHISPER_URL="${PTT_WHISPER_URL:-http://whisper-host:8100/v1/audio/transcriptions}"
 MODEL="${PTT_MODEL:-large-v3-turbo}"
