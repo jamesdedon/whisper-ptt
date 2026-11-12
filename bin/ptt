@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Push-to-talk dictation: record mic while key is held, transcribe on the
+# desktop's whisper-server (OpenAI-compatible), type result into focused window.
+#   ptt start   - begin recording (no-op if already recording)
+#   ptt stop    - stop, transcribe, type (no-op if not recording)
+# Bound in sway: hold $mod+t.
+
+WHISPER_URL="${PTT_WHISPER_URL:-http://whisper-host:8100/v1/audio/transcriptions}"
+MODEL="${PTT_MODEL:-large-v3-turbo}"
+MAX_SECONDS=120   # safety cap if the release event is ever missed
+
+DIR="${XDG_RUNTIME_DIR:-/tmp}/ptt"
+PIDFILE="$DIR/rec.pid"
+WAV="$DIR/rec.wav"
+LOG="$DIR/ptt.log"
+mkdir -p "$DIR"
+
+start() {
+    [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && exit 0
+    rm -f "$WAV"
+    # Terra's internal mic is on DMIC2, but the rt5645 UCM EnableSeq resets the
+    # mux to DMIC1 (dead, all zeros) whenever PulseAudio inits the card.
+    amixer -c 0 -q sset "Stereo1 DMIC Mux" DMIC2 2>>"$LOG"
+    timeout -s INT "$MAX_SECONDS" \
+        parecord --latency-msec=20 --rate=16000 --channels=1 --format=s16le --file-format=wav "$WAV" &
+    echo $! > "$PIDFILE"
+}
+
+stop() {
+    [[ -f $PIDFILE ]] || exit 0
+    pid=$(cat "$PIDFILE"); rm -f "$PIDFILE"
+    kill -INT "$pid" 2>/dev/null
+    while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done
+
+    # Ignore accidental taps (< ~0.3 s of audio: 44-byte header + 16 kB/s)
+    [[ -s $WAV ]] && (( $(stat -c %s "$WAV") > 10000 )) || exit 0
+
+    text=$(curl -sS -m 60 "$WHISPER_URL" \
+        -F file=@"$WAV" -F model="$MODEL" -F response_format=text 2>>"$LOG")
+    rc=$?
+    if (( rc != 0 )); then
+        echo "$(date -Is) curl failed rc=$rc" >> "$LOG"; exit 1
+    fi
+    # Trim surrounding whitespace
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text%"${text##*[![:space:]]}"}"
+    [[ -n $text ]] && wtype -- "$text"
+}
+
+case "$1" in
+    start) start ;;
+    stop)  stop ;;
+    *) echo "usage: ptt start|stop" >&2; exit 2 ;;
+esac
