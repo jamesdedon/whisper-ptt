@@ -1,0 +1,4 @@
+# whisper-ptt: give the logged-in seat user access to the laptop keyboard
+# (to see the PTT key's press/release) and to uinput (to type the transcript).
+KERNEL=="event*", SUBSYSTEM=="input", ATTRS{name}=="AT Translated Set 2 keyboard", TAG+="uaccess"
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

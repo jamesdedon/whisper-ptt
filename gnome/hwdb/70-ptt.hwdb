@@ -1,0 +1,5 @@
+# whisper-ptt: remap the XPS 13 9360's unlabeled F7 (scancode 0x41) to
+# KEY_MACRO1, a code no app or xkb keymap acts on. ptt-daemon listens for it,
+# so holding the key doesn't also send F7 to the focused window.
+evdev:name:AT Translated Set 2 keyboard:*
+ KEYBOARD_KEY_41=macro1

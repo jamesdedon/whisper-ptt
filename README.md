@@ -6,6 +6,8 @@ Whisper server on the LAN and the text is typed into the focused window.
 
 The current setup is the Chromebook **chromenstein** (Google Terra / ASUS
 C202SA, Debian 13, Sway) using the GPU Whisper server on the homelab desktop.
+A GNOME (Wayland) port for a Dell XPS 13 9360 lives in `gnome/`. It is also
+hold-to-talk, on F7. See [GNOME port](#gnome-port).
 
 ## How it works
 
@@ -86,9 +88,76 @@ OpenAI-compatible Whisper server.
 Working end to end as of 2026-11-12: dictated text was typed into a foot
 terminal.
 
+## GNOME port
+
+`gnome/` runs the same pipeline on GNOME Wayland (tested on Fedora Silverblue 45,
+GNOME 51, Dell XPS 13 9360). Hold the unlabeled **F7** key, speak, and release.
+Two things in the Sway version don't carry over to GNOME:
+
+- **No release events.** GNOME custom shortcuts fire only on key press, so they
+  can't do hold-to-talk. `ptt-daemon` reads the laptop keyboard's evdev node
+  directly and runs `ptt-gnome start` on key down and `ptt-gnome stop` on key up.
+- **No `wtype`.** Mutter doesn't implement the virtual-keyboard protocol.
+  `ptt-daemon` creates its own uinput virtual keyboard and types the transcript
+  with it, assuming a US layout. Text it can't type (for example accented
+  letters) goes to the clipboard with a "Ctrl+V to paste" notification. Smart
+  quotes and dashes are converted to plain ASCII first.
+
+`ptt-daemon` uses only the Python standard library, with no `python-evdev` and
+no `ydotool`, so there's nothing to layer on rpm-ostree and no third-party code
+to vet. A GNOME notification takes the place of the Waybar indicator.
+
+```
+F7 down ──► ptt-daemon (evdev) ──► ptt-gnome start ──► parecord
+F7 up   ──► ptt-daemon ──► ptt-gnome stop ──► whisper-server
+                       ◄── transcript ◄──┘
+        ──► uinput virtual keyboard types it into the focused window
+```
+
+| Repo path | Deployed to |
+|---|---|
+| `gnome/ptt-gnome` | `~/.local/bin/ptt-gnome` (record + transcribe; `toggle` works standalone, output to clipboard) |
+| `gnome/ptt-daemon` | `~/.local/bin/ptt-daemon` (key listener + typer) |
+| `gnome/systemd/ptt-daemon.service` | `~/.config/systemd/user/` |
+| `gnome/udev/70-ptt.rules` | `/etc/udev/rules.d/`: `uaccess` on the built-in keyboard and `/dev/uinput` |
+| `gnome/hwdb/70-ptt.hwdb` | `/etc/udev/hwdb.d/`: remaps F7 (scancode `0x41`) to `KEY_MACRO1` |
+
+Install:
+
+```sh
+install -m755 gnome/ptt-gnome gnome/ptt-daemon ~/.local/bin/
+install -Dm644 config.example ~/.config/ptt/config      # set PTT_WHISPER_URL
+sudo install -m644 gnome/udev/70-ptt.rules /etc/udev/rules.d/
+sudo install -m644 gnome/hwdb/70-ptt.hwdb /etc/udev/hwdb.d/
+sudo udevadm control --reload && sudo systemd-hwdb update
+sudo udevadm trigger -c change -s input -s misc
+install -Dm644 gnome/systemd/ptt-daemon.service ~/.config/systemd/user/
+systemctl --user enable --now ptt-daemon.service
+```
+
+Notes:
+
+- **Why remap F7?** The daemon only watches the key; it doesn't grab it, because
+  grabbing would capture the whole keyboard. Unmapped, F7 would also reach the
+  focused app, and in Firefox it toggles caret browsing. `KEY_MACRO1` (656) is
+  above the xkb keycode range, so no app sees it. The daemon listens for both
+  656 and 65 (plain F7), so it still works if the remap isn't installed.
+- **Choosing a different key:** run `ptt-daemon --debug`, press the key to see
+  its code and scancode, then change the hwdb entry or set `PTT_KEYCODES`.
+  `PTT_KBD_NAME` selects the input device (default: `AT Translated Set 2 keyboard`).
+- **Security trade-off:** the `uaccess` rule lets any process in your session
+  read the built-in keyboard and inject keys through uinput. That's the same
+  exposure as being in the `input` group.
+- **Debugging:** `journalctl --user -u ptt-daemon` and `$XDG_RUNTIME_DIR/ptt/ptt.log`.
+
+Status: working end to end on 2026-11-14 (a message was dictated into a Claude Code
+session).
+
 ## Possible follow-ups
 
 - Make the DMIC2 fix system-wide with a UCM override, so other apps such as
   video calls get the internal mic too.
 - Add a toggle mode (press once to start, press again to stop) as an
-  alternative to holding the keys.
+  alternative to holding the keys. `ptt-gnome toggle` already does this on GNOME.
+- GNOME: support layouts other than US by reading the xkb keymap instead of using
+  a fixed table.

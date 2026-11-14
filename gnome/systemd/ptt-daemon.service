@@ -1,0 +1,12 @@
+[Unit]
+Description=whisper-ptt hold-to-talk listener
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/ptt-daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

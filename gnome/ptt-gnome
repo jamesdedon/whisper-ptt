@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Push-to-talk dictation for GNOME (Wayland) -- port of bin/ptt.
+# Driven by ptt-daemon (hold F7): start on key down, stop on key up; the daemon
+# types the text. Standalone, `toggle` works from any GNOME shortcut and puts
+# the transcript on the clipboard.
+#   ptt-gnome start | stop | toggle
+
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/ptt/config"
+[[ -f $CONFIG ]] && . "$CONFIG"
+
+WHISPER_URL="${PTT_WHISPER_URL:-http://whisper-host:8100/v1/audio/transcriptions}"
+MODEL="${PTT_MODEL:-large-v3-turbo}"
+OUTPUT="${PTT_OUTPUT:-clipboard}"   # clipboard | stdout (used by ptt-daemon)
+MAX_SECONDS=120
+
+DIR="${XDG_RUNTIME_DIR:-/tmp}/ptt"
+PIDFILE="$DIR/rec.pid"; WAV="$DIR/rec.wav"; LOG="$DIR/ptt.log"; NID="$DIR/notify.id"
+mkdir -p "$DIR"
+
+# One notification, replaced in place across states (stands in for the Waybar pill).
+notify() {  # notify <summary> [body] [timeout_ms]
+    local id; id=$(cat "$NID" 2>/dev/null || echo 0)
+    notify-send -a Dictation -i audio-input-microphone -h int:transient:1 \
+        -t "${3:-0}" -r "$id" -p "$1" "${2:-}" > "$NID" 2>>"$LOG"
+}
+unnotify() {
+    local id; id=$(cat "$NID" 2>/dev/null) || return 0
+    gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method org.freedesktop.Notifications.CloseNotification "$id" >/dev/null 2>&1
+    rm -f "$NID"
+}
+
+recording() { [[ -f $PIDFILE ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+start() {
+    recording && exit 0
+    rm -f "$WAV"
+    timeout -s INT "$MAX_SECONDS" \
+        parecord --latency-msec=20 --rate=16000 --channels=1 --format=s16le --file-format=wav "$WAV" &
+    echo $! > "$PIDFILE"
+    notify "Recording…" "Press the shortcut again to stop"
+}
+
+stop() {
+    [[ -f $PIDFILE ]] || exit 0
+    pid=$(cat "$PIDFILE"); rm -f "$PIDFILE"
+    kill -INT "$pid" 2>/dev/null
+    while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done
+
+    if ! [[ -s $WAV ]] || (( $(stat -c %s "$WAV") <= 10000 )); then
+        unnotify; exit 0
+    fi
+    notify "Transcribing…"
+
+    text=$(curl -sS -m 60 "$WHISPER_URL" \
+        -F file=@"$WAV" -F model="$MODEL" -F response_format=text 2>>"$LOG")
+    rc=$?
+    if (( rc != 0 )); then
+        echo "$(date -Is) curl failed rc=$rc" >> "$LOG"
+        notify "Dictation failed" "curl rc=$rc — see $LOG" 4000; exit 1
+    fi
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text%"${text##*[![:space:]]}"}"
+    [[ -z $text ]] && { unnotify; exit 0; }
+
+    if [[ $OUTPUT == stdout ]]; then
+        unnotify; printf '%s\n' "$text"   # ptt-daemon types it
+    else
+        printf '%s' "$text" | wl-copy
+        notify "Copied — Ctrl+V to paste" "$text" 3000
+    fi
+}
+
+case "$1" in
+    start)  start ;;
+    stop)   stop ;;
+    toggle) if recording; then stop; else start; fi ;;
+    *) echo "usage: ptt-gnome toggle|start|stop" >&2; exit 2 ;;
+esac

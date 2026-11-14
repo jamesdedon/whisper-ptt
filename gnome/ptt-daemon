@@ -1,0 +1,127 @@
+#!/usr/bin/python3 -I
+"""Hold-to-talk listener for GNOME/Wayland (stdlib only).
+
+GNOME shortcuts fire on press only, so this reads the laptop keyboard's evdev
+node directly: key down -> `ptt-gnome start`, key up -> `ptt-gnome stop`,
+then types the transcript through its own uinput virtual keyboard (US layout).
+Non-typeable text falls back to the clipboard.
+
+Needs read access to the keyboard event node and write access to /dev/uinput
+(see udev/70-ptt.rules).
+
+  ptt-daemon          run the listener
+  ptt-daemon --debug  print key events (code, scancode, value) to find a key
+"""
+import fcntl, os, select, struct, subprocess, sys, threading, time
+
+KBD_NAME = os.environ.get("PTT_KBD_NAME", "AT Translated Set 2 keyboard")
+# KEY_MACRO1 (656) after the hwdb remap; plain F7 is 65.
+PTT_CODES = {int(c) for c in os.environ.get("PTT_KEYCODES", "656,65").split(",")}
+PTT = os.path.expanduser("~/.local/bin/ptt-gnome")
+
+EV_SYN, EV_KEY, EV_MSC, MSC_SCAN = 0, 1, 4, 4
+EVENT = struct.Struct("llHHi")  # struct input_event on 64-bit
+
+# --- US-layout typing table: char -> (keycode, shift) ----------------------
+KEYMAP = {" ": (57, False), "\n": (28, False), "\t": (15, False)}
+for ch, code in zip("qwertyuiop", range(16, 26)): KEYMAP[ch] = (code, False)
+for ch, code in zip("asdfghjkl", range(30, 39)):  KEYMAP[ch] = (code, False)
+for ch, code in zip("zxcvbnm", range(44, 51)):    KEYMAP[ch] = (code, False)
+for ch in list(KEYMAP):
+    if ch.isalpha(): KEYMAP[ch.upper()] = (KEYMAP[ch][0], True)
+for ch, code in zip("1234567890", range(2, 12)):  KEYMAP[ch] = (code, False)
+for ch, code in zip("!@#$%^&*()", range(2, 12)):  KEYMAP[ch] = (code, True)
+for plain, shifted, code in [("-", "_", 12), ("=", "+", 13), ("[", "{", 26), ("]", "}", 27),
+                             (";", ":", 39), ("'", '"', 40), ("`", "~", 41), ("\\", "|", 43),
+                             (",", "<", 51), (".", ">", 52), ("/", "?", 53)]:
+    KEYMAP[plain] = (code, False); KEYMAP[shifted] = (code, True)
+TRANSLIT = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-",
+                          "…": "...", " ": " "})
+SHIFT = 42
+
+
+class VirtualKeyboard:
+    UI_SET_EVBIT, UI_SET_KEYBIT = 0x40045564, 0x40045565
+    UI_DEV_SETUP, UI_DEV_CREATE = 0x405C5503, 0x5501
+
+    def __init__(self):
+        self.fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        fcntl.ioctl(self.fd, self.UI_SET_EVBIT, EV_KEY)
+        for code in {c for c, _ in KEYMAP.values()} | {SHIFT}:
+            fcntl.ioctl(self.fd, self.UI_SET_KEYBIT, code)
+        setup = struct.pack("HHHH80sI", 0x06, 0x1, 0x1, 1, b"ptt-virtual-keyboard", 0)
+        fcntl.ioctl(self.fd, self.UI_DEV_SETUP, setup)
+        fcntl.ioctl(self.fd, self.UI_DEV_CREATE)
+        time.sleep(0.5)  # let the compositor pick up the new device
+
+    def _emit(self, code, value):
+        os.write(self.fd, EVENT.pack(0, 0, EV_KEY, code, value) + EVENT.pack(0, 0, EV_SYN, 0, 0))
+        time.sleep(0.003)
+
+    def type(self, text):
+        for ch in text:
+            code, shift = KEYMAP[ch]
+            if shift: self._emit(SHIFT, 1)
+            self._emit(code, 1); self._emit(code, 0)
+            if shift: self._emit(SHIFT, 0)
+
+
+def find_device(name):
+    with open("/proc/bus/input/devices") as f:
+        for line in f.read().split("\n\n"):
+            if f'Name="{name}"' in line:
+                for tok in line.split():
+                    if tok.startswith("event"):
+                        return "/dev/input/" + tok
+    sys.exit(f"ptt-daemon: no input device named {name!r}")
+
+
+def notify_clipboard(text):
+    subprocess.run(["wl-copy"], input=text.encode())
+    subprocess.run(["notify-send", "-a", "Dictation", "-i", "audio-input-microphone",
+                    "-h", "int:transient:1", "-t", "3000", "Copied — Ctrl+V to paste", text])
+
+
+busy = threading.Lock()
+
+def finish(vk):
+    with busy:
+        r = subprocess.run([PTT, "stop"], capture_output=True, text=True,
+                           env={**os.environ, "PTT_OUTPUT": "stdout"})
+        text = r.stdout.strip().translate(TRANSLIT)
+        if not text:
+            return
+        if vk and all(ch in KEYMAP for ch in text):
+            vk.type(text)
+        else:
+            notify_clipboard(text)
+
+
+def main():
+    debug = "--debug" in sys.argv
+    dev = find_device(KBD_NAME)
+    fd = os.open(dev, os.O_RDONLY)
+    vk = None
+    if not debug:
+        try:
+            vk = VirtualKeyboard()
+        except OSError as e:
+            print(f"ptt-daemon: no uinput ({e}); clipboard only", file=sys.stderr)
+    print(f"ptt-daemon: listening on {dev} for codes {sorted(PTT_CODES)}", file=sys.stderr)
+    scan = None
+    while True:
+        select.select([fd], [], [])
+        _, _, typ, code, value = EVENT.unpack(os.read(fd, EVENT.size))
+        if typ == EV_MSC and code == MSC_SCAN:
+            scan = value
+        elif typ == EV_KEY:
+            if debug and value != 2:
+                print(f"code={code} scancode={scan if scan is None else hex(scan)} value={value}", flush=True)
+            elif code in PTT_CODES and value == 1:
+                subprocess.run([PTT, "start"])  # sync: pidfile exists before any release
+            elif code in PTT_CODES and value == 0:
+                threading.Thread(target=finish, args=(vk,), daemon=True).start()
+
+
+if __name__ == "__main__":
+    main()
